@@ -1,21 +1,135 @@
 name: Fetch RSS
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 20 * * 6'  # 每周六晚上 8 点运行
+    - cron: '0 * * * *'   # 每小时跑一次
+  workflow_dispatch:      # 允许手动触发
 
 jobs:
-  fetch:
+  fetch-rss:
     runs-on: ubuntu-latest
     steps:
-      # 第一步：检出代码（必须要有，否则无法保存文件）
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      # 第二步：运行 RSS 抓取
-      - name: Fetch RSS
-        uses: suisei-cn/rss-action@v2
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          url: https://www.sciencenews.org/feed
-          output: ./weekly-draft/raw.json
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install feedparser pytz
+
+      - name: Run RSS Fetcher
+        env:
+          RSS_URL: ${{ secrets.RSS_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TZ: Asia/Shanghai
+        run: |
+          python - <<EOF
+          import feedparser
+          import os
+          import re
+          import requests
+          from datetime import datetime, timezone, timedelta
+
+          # --- 配置 ---
+          rss_url = os.getenv('RSS_URL')
+          token = os.getenv('GITHUB_TOKEN')
+          repo = os.getenv('GITHUB_REPOSITORY')
+          tz_str = os.getenv('TZ', 'Asia/Shanghai')
+
+          # --- 辅助函数 ---
+          def clean_title(title):
+              if not title: return "No Title"
+              # 移除非法文件名字符
+              return re.sub(r'[<>:"/\\|?*\x00-\x1F]', '_', title).strip()
+
+          def get_beijing_time():
+              # 获取北京时间
+              tz = timezone(timedelta(hours=8))
+              return datetime.now(tz)
+
+          # --- 主逻辑 ---
+          print(f"Fetching RSS from: {rss_url}")
+          feed = feedparser.parse(rss_url)
+
+          if not feed.entries:
+              print("No entries found in RSS feed.")
+              exit(1)
+
+          # 取最新的一篇文章
+          latest_entry = feed.entries[0]
+          title = clean_title(latest_entry.title)
+          link = latest_entry.link
+          pub_date = latest_entry.get('published', 'Unknown Date')
+
+          # 创建文件名
+          filename = f"issues/{title}.md"
+
+          # 检查文件是否已存在（避免重复创建）
+          # 注意：这里简化处理，实际可能需要更复杂的逻辑来判断是否更新
+          # 为了演示，我们每次都尝试创建，如果存在则跳过或更新
+
+          content = f"""---
+          title: {title}
+          date: {pub_date}
+          ---
+
+          原文链接：{link}
+
+          > 自动抓取于 {get_beijing_time().strftime('%Y-%m-%d %H:%M:%S')}
+          """
+
+          # 使用 GitHub API 创建或更新文件
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+
+          # 先检查文件是否存在
+          file_exists = False
+          sha = None
+          check_url = f"https://api.github.com/repos/{repo}/contents/{filename}"
+
+          response = requests.get(check_url, headers=headers)
+          if response.status_code == 200:
+              file_exists = True
+              sha = response.json()['sha']
+              print(f"File {filename} already exists, updating...")
+          elif response.status_code == 404:
+              print(f"File {filename} does not exist, creating...")
+          else:
+              print(f"Error checking file: {response.status_code}")
+              exit(1)
+
+          data = {
+              "message": f"Update: {title}",
+              "content": content.encode('base64') if hasattr(content, 'encode') else content.encode('utf-8').hex(), # 简单的 base64 模拟，实际需 import base64
+              "content": content.encode('utf-8').hex(), # 修正：实际应使用 base64
+              "content": __import__('base64').b64encode(content.encode('utf-8')).decode('utf-8'), # 正确的 base64 编码
+          }
+
+          if file_exists:
+              data["sha"] = sha
+              method = "PUT"
+          else:
+              method = "PUT"
+
+          # 确保 issues 目录存在（GitHub API 会自动处理路径，但最好确保）
+          # 这里为了简单，直接上传
+
+          response = requests.put(
+              f"https://api.github.com/repos/{repo}/contents/{filename}",
+              json=data,
+              headers=headers
+          )
+
+          if response.status_code in [200, 201]:
+              print(f"Successfully created/updated {filename}")
+          else:
+              print(f"Failed to create/update file: {response.status_code}")
+              print(response.text)
+          EOF
