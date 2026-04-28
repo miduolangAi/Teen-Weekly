@@ -9,13 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       uses: actions/checkout@v4
-      name: Fetch NASA Teens Content
+      name: Fetch RSS
         uses: suisei-cn/rss-action@v2
         with:
-          url: https://www.nasa.gov/feeds/iotd-feed
+          url: https://www.sciencenews.org/feed
           output: ./weekly-draft/raw.json
-      name: Create PR
-        uses: peter-evans/create-pull-request@v5
-        with:
-          branch: auto-weekly
-          title: "【自动】第X期周报草稿"
