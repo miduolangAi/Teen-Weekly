@@ -1,15 +1,20 @@
-yaml
 name: Fetch RSS
+
 on:
   workflow_dispatch:
   schedule:
-    cron: '0 20   6'
+    - cron: '0 20 * * 6'  # 每周六晚上 8 点运行
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      uses: actions/checkout@v4
-      name: Fetch RSS
+      # 第一步：检出代码（必须要有，否则无法保存文件）
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 第二步：运行 RSS 抓取
+      - name: Fetch RSS
         uses: suisei-cn/rss-action@v2
         with:
           url: https://www.sciencenews.org/feed
